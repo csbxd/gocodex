@@ -115,7 +115,7 @@ def build(arch, args):
         'rustc': output(['rustc', '--version']), 'zig': output([zig, 'version']),
         'sdk_commit': output(['git', '-C', 'codex', 'rev-parse', 'HEAD']),
         'cargo_lock_sha256': sha256(ROOT / 'Cargo.lock'),
-        'bridge_source_sha256': {str(p.relative_to(ROOT)): sha256(p) for p in sorted((ROOT/'rust/src').glob('*.rs'))},
+        'bridge_source_sha256': {str(p.relative_to(ROOT)): sha256(p) for p in [ROOT/'build.rs', ROOT/'Cargo.toml', *sorted((ROOT/'rust/src').glob('*.rs'))]},
         'exports': sorted(exports), 'private_common_symbols': private_common, 'vendored_openssl': True,
     }
     (destination / 'build.json').write_text(json.dumps(record, indent=2) + '\n')

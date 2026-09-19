@@ -303,7 +303,7 @@ pub(crate) fn create(config: &[u8]) -> Result<Output, BridgeError> {
     })
 }
 
-fn parse_proxy(value: &str) -> Result<reqwest::Proxy, BridgeError> {
+pub(crate) fn parse_proxy(value: &str) -> Result<reqwest::Proxy, BridgeError> {
     // Never include the supplied URL in validation errors: it may carry a password.
     let url = url::Url::parse(value).map_err(|_| BridgeError::invalid("invalid ProxyURL"))?;
     if !matches!(url.scheme(), "http" | "https" | "socks5" | "socks5h") {

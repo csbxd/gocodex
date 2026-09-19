@@ -72,6 +72,9 @@ HTTP 的 `NewClient` 和 `NewTransport` 均支持 `Options{ProxyURL: "http://127
 可使用 HTTP、HTTPS、SOCKS5/SOCKS5h 代理及用户名密码认证。
 显式代理覆盖环境变量；`Options{NoProxy: true}` 强制直连。详见 [指定代理](httpclient/README.md#指定代理)。
 
+WebSocket 同样支持 `ProxyURL` / `NoProxy`，并提供失败握手状态、响应头及已捕获错误体，
+以及大消息分片期间优先发送的 `WriteControl`。详见 [WebSocket](websocket/README.md)。
+
 可运行示例位于 `examples/http`、`examples/roundtripper`、`examples/echo`。
 
 ## 目录

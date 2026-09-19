@@ -69,12 +69,17 @@ for package in (['httpclient', 'websocket'] if args.packages == 'both' else [arg
     fmt.Println("explicit HTTP proxy OK")''')
     else:
         imports.append('ws "'+modules[0]+'/websocket"')
-        checks.append('''wc, err := ws.NewClient(ws.Options{LoopbackDirect:true}); must(err); defer wc.Close()
+        checks.append('''wc, err := ws.NewClient(ws.Options{NoProxy:true}); must(err); defer wc.Close()
     conn, _, err := wc.Dial(ctx, "ws"+strings.TrimPrefix(server.URL,"http")+"/ws",nil); must(err); defer conn.Close()
+    must(conn.WriteControl(ctx, ws.PingMessage, []byte("probe")))
+    pongKind, pongData, err := conn.ReadMessage(ctx); must(err)
+    if pongKind!=ws.PongMessage || string(pongData)!="probe" { panic("control frame mismatch") }
     must(conn.WriteMessage(ctx, ws.TextMessage, []byte("native-websocket")))
     kind, data, err := conn.ReadMessage(ctx); must(err)
     if kind!=ws.TextMessage || string(data)!="native-websocket" { panic("WebSocket echo mismatch") }
-    fmt.Println("WebSocket native archive OK")''')
+    _, rejected, err := wc.Dial(ctx, "ws"+strings.TrimPrefix(server.URL,"http")+"/http",nil)
+    if _, ok := err.(*ws.HandshakeError); !ok || rejected==nil || rejected.StatusCode!=200 || string(rejected.Body)!="native-http" { panic("handshake metadata mismatch") }
+    fmt.Println("WebSocket native archive, controls and handshake errors OK")''')
 (consumer/'main.go').write_text('''package main
 import (
  "context"
@@ -99,15 +104,20 @@ func main() {
   digest:=sha1.Sum([]byte(r.Header.Get("Sec-WebSocket-Key")+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
   _,_=fmt.Fprintf(stream,"HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: %s\\r\\n\\r\\n",base64.StdEncoding.EncodeToString(digest[:]))
   if stream.Flush()!=nil {return}
+  for {
   var head [2]byte
   if _,err=io.ReadFull(stream,head[:]);err!=nil{return}
-  if head[0]!=0x81 || head[1]&0x80==0 || head[1]&0x7f>=126 {return}
+  if head[1]&0x80==0 || head[1]&0x7f>=126 {return}
   var mask [4]byte
   if _,err=io.ReadFull(stream,mask[:]);err!=nil{return}
   data:=make([]byte,int(head[1]&0x7f))
   if _,err=io.ReadFull(stream,data);err!=nil{return}
   for i:=range data {data[i]^=mask[i%4]}
+  if head[0]==0x89 { _,_=socket.Write(append([]byte{0x8a,byte(len(data))},data...)); continue }
+  if head[0]!=0x81 {return}
   _,_=socket.Write(append([]byte{0x81,byte(len(data))},data...))
+  return
+  }
  }))
  defer server.Close()
  ctx,cancel:=context.WithTimeout(context.Background(),15*time.Second);defer cancel()

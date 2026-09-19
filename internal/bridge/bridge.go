@@ -44,7 +44,8 @@ func takeResult(result C.gocodex_result) (uint64, []byte, error) {
 		if jsonErr := json.Unmarshal(data, &err); jsonErr != nil {
 			return 0, nil, fmt.Errorf("gocodex: invalid native error: %w", jsonErr)
 		}
-		return 0, nil, &err
+		// Keep structured failure metadata available to transport-specific callers.
+		return 0, data, &err
 	case 2:
 		return 0, nil, io.EOF
 	default:

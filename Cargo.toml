@@ -20,6 +20,9 @@ reqwest = { version = "0.12.28", features = ["socks"] }
 base64 = "0.22"
 bytes = "1"
 futures-util = { version = "0.3", features = ["sink"] }
+futures = "0.3"
+rustls = "0.23.45"
+tokio-rustls = "0.26.4"
 http = "1"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
@@ -42,3 +45,6 @@ debug = 0
 
 [dev-dependencies]
 pretty_assertions = "1.4"
+rcgen = "0.14"
+codex-utils-rustls-provider = { path = "codex/codex-rs/utils/rustls-provider" }
+tokio = { version = "1", features = ["test-util"] }

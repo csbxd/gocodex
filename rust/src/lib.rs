@@ -7,6 +7,14 @@
 mod http_client;
 mod runtime;
 mod websocket_client;
+#[allow(dead_code, clippy::result_large_err)] // Preserve the complete SDK and its upstream tests.
+mod websocket_sdk {
+    include!(concat!(env!("OUT_DIR"), "/websocket_sdk.rs"));
+}
+// The SDK's dialer and tests refer to these types through their crate root.
+use websocket_sdk::{AsyncIo, ConnectionInner, TcpNodelay};
+#[cfg(test)]
+use websocket_sdk::{WebSocketConnection, WebSocketConnector, WebSocketTlsMode};
 // Reuse the pinned SDK's redirect rules and its credential-stripping policy.
 #[path = "../../codex/codex-rs/http-client/src/route_aware_redirect.rs"]
 mod route_aware_redirect;
@@ -20,6 +28,8 @@ use std::{ptr, slice};
 pub(crate) struct BridgeError {
     kind: &'static str,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<serde_json::Value>,
 }
 
 impl BridgeError {
@@ -27,11 +37,17 @@ impl BridgeError {
         Self {
             kind,
             message: message.into(),
+            details: None,
         }
     }
 
     pub(crate) fn invalid(message: impl Into<String>) -> Self {
         Self::new("invalid_input", message)
+    }
+
+    pub(crate) fn with_details(mut self, details: serde_json::Value) -> Self {
+        self.details = Some(details);
+        self
     }
 }
 

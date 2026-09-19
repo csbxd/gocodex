@@ -1,17 +1,19 @@
 {
   "archive": "libgocodex_ffi.a",
-  "sha256": "999dccbb486f03e78cf1b3ba19b8c58589b18d6d060c3c3db615cb39c32f067d",
+  "sha256": "fdb37a08424fd63c2537ae4fcf87a761046c723632f43e960ab2ccd9815bc6b5",
   "target": "x86_64-unknown-linux-gnu",
   "glibc_baseline": "2.17",
   "rustc": "rustc 1.98.1 (48a229cea 2026-09-01) (gentoo)",
   "zig": "0.15.2",
   "sdk_commit": "78245b47af2a7aafcabe025828ceecca69db4df1",
-  "cargo_lock_sha256": "dcee17302d2c1e6ef6dcdb2de183c76859efdb721ed59af2363ea86fee3c874d",
+  "cargo_lock_sha256": "893f1a6fb46368aea13c07a6f23fcdb076cc6696e26565e54bc61f2a91c67ac1",
   "bridge_source_sha256": {
-    "rust/src/http_client.rs": "5abd7481668e1ee134f7879c5e0c96944fc661fd63088ae6d7304f9153cf5bc8",
-    "rust/src/lib.rs": "12515c0c2660cfc79a6d08f0f42166748df61d6461a056ff1dca2962b0ce4b2b",
+    "build.rs": "b2934a8b79a1871d47033b12ddd05b1a28096acb659a0ede12a22672a0b513bf",
+    "Cargo.toml": "8011acfabbf615a522a4f55ce55054d9d7eb17cb0a44344c0cb1bacd8141d97c",
+    "rust/src/http_client.rs": "bf9df54c502848ba7e813cc8a9e46849717153fb3af9c5e87475ddca395355af",
+    "rust/src/lib.rs": "bc3675dee88f46c7c497160518abd878ab6fe8285a5da529e7b088619b11298e",
     "rust/src/runtime.rs": "3488c92fc2f618dc354c67599392c313ceb93a9a1055310b44ed616b8252c6c6",
-    "rust/src/websocket_client.rs": "6998979d7c358d2f19813265aa87ed332a7cd70fdba5551a4e929083269c5c72"
+    "rust/src/websocket_client.rs": "b2ff48763a87162ee173282562a10fff499923f470d74acd5295cddc61e09381"
   },
   "exports": [
     "gocodex_bridge_version",

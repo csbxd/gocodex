@@ -36,13 +36,17 @@ const (
 // Options configures a reusable Rust WebSocketConnector. Zero values use the
 // SDK's system proxy policy, native/custom CA roots and message size limits.
 type Options struct {
-	ProxyPolicy      ProxyPolicy
-	HandshakeTimeout time.Duration
-	LoopbackDirect   bool // Bypass proxies only for SDK-validated loopback URLs.
-	TCPNoDelay       bool
-	MaxMessageSize   int // Zero keeps the SDK default; positive values limit bytes.
-	MaxFrameSize     int
-	ChatGPTCookies   []string
+	ProxyPolicy           ProxyPolicy
+	ProxyURL              string // Explicit HTTP/HTTPS/SOCKS5/SOCKS5h proxy; overrides system/environment routing.
+	NoProxy               bool   // Force direct connections; mutually exclusive with ProxyURL.
+	HandshakeTimeout      time.Duration
+	LoopbackDirect        bool // Bypass proxies only for SDK-validated loopback URLs.
+	TCPNoDelay            bool
+	MaxMessageSize        int // Zero keeps the SDK default; positive values limit bytes.
+	MaxFrameSize          int
+	ChatGPTCookies        []string
+	WriteFrameSize        int // Outbound data fragment size; default 32 KiB, maximum 1 MiB.
+	MaxHandshakeBodyBytes int // Captured rejected-upgrade body limit; default 64 KiB, maximum 1 MiB.
 }
 
 // Client owns a connector and its connections. Do not copy; call Close when done.
@@ -50,8 +54,14 @@ type Options struct {
 type Client struct{ handle atomic.Uint64 }
 
 func NewClient(options Options) (*Client, error) {
-	if options.HandshakeTimeout < 0 || options.MaxMessageSize < 0 || options.MaxFrameSize < 0 {
+	if options.HandshakeTimeout < 0 || options.MaxMessageSize < 0 || options.MaxFrameSize < 0 || options.WriteFrameSize < 0 || options.MaxHandshakeBodyBytes < 0 {
 		return nil, errors.New("codexws: timeouts and size limits must not be negative")
+	}
+	if options.ProxyURL != "" && (options.NoProxy || options.LoopbackDirect) {
+		return nil, errors.New("codexws: ProxyURL is mutually exclusive with NoProxy and LoopbackDirect")
+	}
+	if options.WriteFrameSize > 1<<20 || options.MaxHandshakeBodyBytes > 1<<20 {
+		return nil, errors.New("codexws: frame and handshake body limits must not exceed 1 MiB")
 	}
 	if options.ProxyPolicy == "" {
 		options.ProxyPolicy = RespectSystemProxy
@@ -64,15 +74,20 @@ func NewClient(options Options) (*Client, error) {
 		ms++
 	}
 	config, err := json.Marshal(struct {
-		ProxyPolicy        ProxyPolicy `json:"proxy_policy"`
-		HandshakeTimeoutMS uint64      `json:"handshake_timeout_ms"`
-		LoopbackDirect     bool        `json:"loopback_direct"`
-		TCPNoDelay         bool        `json:"tcp_nodelay"`
-		MaxMessageSize     int         `json:"max_message_size,omitempty"`
-		MaxFrameSize       int         `json:"max_frame_size,omitempty"`
-		ChatGPTCookies     []string    `json:"chatgpt_cookies"`
+		ProxyPolicy           ProxyPolicy `json:"proxy_policy"`
+		HandshakeTimeoutMS    uint64      `json:"handshake_timeout_ms"`
+		LoopbackDirect        bool        `json:"loopback_direct"`
+		TCPNoDelay            bool        `json:"tcp_nodelay"`
+		MaxMessageSize        int         `json:"max_message_size,omitempty"`
+		MaxFrameSize          int         `json:"max_frame_size,omitempty"`
+		ChatGPTCookies        []string    `json:"chatgpt_cookies"`
+		ProxyURL              string      `json:"proxy_url"`
+		NoProxy               bool        `json:"no_proxy"`
+		WriteFrameSize        int         `json:"write_frame_size"`
+		MaxHandshakeBodyBytes int         `json:"max_handshake_body_bytes"`
 	}{options.ProxyPolicy, ms, options.LoopbackDirect, options.TCPNoDelay,
-		options.MaxMessageSize, options.MaxFrameSize, options.ChatGPTCookies})
+		options.MaxMessageSize, options.MaxFrameSize, options.ChatGPTCookies,
+		options.ProxyURL, options.NoProxy, options.WriteFrameSize, options.MaxHandshakeBodyBytes})
 	if err != nil {
 		return nil, err
 	}
@@ -105,13 +120,26 @@ func (c *Client) Close() error {
 }
 
 type Handshake struct {
-	StatusCode int
-	Headers    http.Header
+	StatusCode    int
+	Headers       http.Header
+	Body          []byte // Captured HTTP error body; empty on successful upgrades.
+	BodyTruncated bool   // Body capped or completeness could not be established.
 }
+
+// HandshakeError preserves rejected-upgrade metadata. Dial also returns the same
+// Handshake as its second result. Unwrap retains errors.As(err, **Error).
+type HandshakeError struct {
+	Handshake *Handshake
+	Err       error
+}
+
+func (e *HandshakeError) Error() string { return e.Err.Error() }
+func (e *HandshakeError) Unwrap() error { return e.Err }
 
 // Dial establishes a ws/wss connection. ctx controls only the handshake; use
 // per-operation contexts for ReadMessage and WriteMessage after Dial returns.
 // Headers can include authentication, cookies and Sec-WebSocket-Protocol.
+// A rejected HTTP upgrade returns a non-nil Handshake and *HandshakeError.
 func (c *Client) Dial(ctx context.Context, url string, headers http.Header) (*Conn, *Handshake, error) {
 	if err := checkContext(ctx); err != nil {
 		return nil, nil, err
@@ -152,26 +180,49 @@ func (c *Client) Dial(ctx context.Context, url string, headers http.Header) (*Co
 	}
 	if err != nil {
 		_ = conn.Close()
+		var native *Error
+		if errors.As(err, &native) && native.Kind == "handshake" {
+			var failure struct {
+				Details json.RawMessage `json:"details"`
+			}
+			if decodeErr := json.Unmarshal(data, &failure); decodeErr != nil {
+				return nil, nil, decodeErr
+			}
+			handshake, decodeErr := decodeHandshake(failure.Details)
+			if decodeErr != nil {
+				return nil, nil, decodeErr
+			}
+			return nil, handshake, &HandshakeError{Handshake: handshake, Err: err}
+		}
 		return nil, nil, err
 	}
-	var response struct {
-		StatusCode int         `json:"status_code"`
-		Headers    [][2]string `json:"headers"`
-	}
-	if err = json.Unmarshal(data, &response); err != nil {
+	handshake, err := decodeHandshake(data)
+	if err != nil {
 		_ = conn.Close()
 		return nil, nil, err
 	}
-	handshake := &Handshake{StatusCode: response.StatusCode, Headers: make(http.Header)}
+	return conn, handshake, nil
+}
+
+func decodeHandshake(data []byte) (*Handshake, error) {
+	var response struct {
+		StatusCode    int         `json:"status_code"`
+		Headers       [][2]string `json:"headers"`
+		Body          []byte      `json:"body"`
+		BodyTruncated bool        `json:"body_truncated"`
+	}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil, fmt.Errorf("codexws: invalid native handshake: %w", err)
+	}
+	handshake := &Handshake{StatusCode: response.StatusCode, Headers: make(http.Header), Body: response.Body, BodyTruncated: response.BodyTruncated}
 	for _, header := range response.Headers {
 		value, err := base64.StdEncoding.DecodeString(header[1])
 		if err != nil {
-			_ = conn.Close()
-			return nil, nil, err
+			return nil, err
 		}
 		handshake.Headers.Add(header[0], string(value))
 	}
-	return conn, handshake, nil
+	return handshake, nil
 }
 
 type MessageType uint8
@@ -257,6 +308,9 @@ func (c *Conn) ReadMessage(ctx context.Context) (MessageType, []byte, error) {
 	return MessageType(data[0]), data[1:], nil
 }
 
+// WriteMessage sends one message as masked data fragments without interleaving
+// other data messages. Controls take priority between fragments. Automatic replies
+// require an active ReadMessage call.
 func (c *Conn) WriteMessage(ctx context.Context, kind MessageType, data []byte) error {
 	if err := checkContext(ctx); err != nil {
 		return err
@@ -271,11 +325,21 @@ func (c *Conn) WriteMessage(ctx context.Context, kind MessageType, data []byte) 
 	err = c.operationError(ctx, err)
 	if err != nil {
 		var native *Error
-		if !errors.As(err, &native) || native.Kind != "invalid_input" {
+		if !errors.As(err, &native) || (native.Kind != "invalid_input" && native.Kind != "closing") {
 			_ = c.Close()
 		}
 	}
 	return err
+}
+
+// WriteControl sends Ping, Pong or Close concurrently with data writes, taking
+// priority at the next frame boundary. Cancellation closes the connection.
+// A closing error does not discard the peer's pending Close frame.
+func (c *Conn) WriteControl(ctx context.Context, kind MessageType, data []byte) error {
+	if kind != PingMessage && kind != PongMessage && kind != CloseMessage {
+		return errors.New("codexws: WriteControl requires Ping, Pong or Close")
+	}
+	return c.WriteMessage(ctx, kind, data)
 }
 
 // Close releases the socket immediately and interrupts blocked operations.
