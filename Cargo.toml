@@ -1,0 +1,39 @@
+[package]
+name = "gocodex-ffi"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "gocodex_ffi"
+path = "rust/src/lib.rs"
+crate-type = ["staticlib"]
+
+[workspace]
+exclude = ["codex"]
+
+[dependencies]
+# Bundle OpenSSL so consumers need neither libssl-dev nor libssl at runtime.
+openssl = { version = "0.10", features = ["vendored"] }
+base64 = "0.22"
+bytes = "1"
+futures-util = { version = "0.3", features = ["sink"] }
+http = "1"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+url = "2"
+codex-http-client = { path = "codex/codex-rs/http-client" }
+codex-websocket-client = { path = "codex/codex-rs/websocket-client" }
+tokio-tungstenite = { version = "0.28.0", features = ["proxy", "rustls-tls-native-roots"] }
+
+# Cargo does not inherit patches from a path dependency's workspace.
+# These match codex/codex-rs/Cargo.toml; the SDK needs the fork's proxy feature.
+[patch.crates-io]
+tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "0e5b2d73aa18dd9f0a50ee9ff199d5aef7594186" }
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "4fffad30fe373adbdcffab9545e9e9bf4f2fc19f" }
+
+[profile.release]
+debug = 0

@@ -1,0 +1,37 @@
+{
+  "archive": "libgocodex_ffi.a",
+  "sha256": "5d6032a191f59ece62f4c8d8b1afed1d540d003eff41248ebef62df658cb33b4",
+  "target": "x86_64-unknown-linux-gnu",
+  "glibc_baseline": "2.17",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01) (gentoo)",
+  "zig": "0.15.2",
+  "sdk_commit": "78245b47af2a7aafcabe025828ceecca69db4df1",
+  "cargo_lock_sha256": "0ac9b70f67988d63166f800cd209d82f33f0afed81412bde7e4f1aa19fdc0340",
+  "bridge_source_sha256": {
+    "rust/src/http_client.rs": "6bdb57f1cf024a80e6206eb30dceded2e3919dc266f1301336282dd9bf096aae",
+    "rust/src/lib.rs": "7aac4b8cbbafb1e56b011a594e399ff107a8b0a0610ba287379de9ded68ef3b8",
+    "rust/src/runtime.rs": "3488c92fc2f618dc354c67599392c313ceb93a9a1055310b44ed616b8252c6c6",
+    "rust/src/websocket_client.rs": "6998979d7c358d2f19813265aa87ed332a7cd70fdba5551a4e929083269c5c72"
+  },
+  "exports": [
+    "gocodex_bridge_version",
+    "gocodex_buffer_free",
+    "gocodex_http_client_close",
+    "gocodex_http_client_new",
+    "gocodex_http_request_close",
+    "gocodex_http_request_new",
+    "gocodex_http_request_send",
+    "gocodex_http_response_read",
+    "gocodex_ws_client_close",
+    "gocodex_ws_client_new",
+    "gocodex_ws_connect",
+    "gocodex_ws_connection_close",
+    "gocodex_ws_connection_new",
+    "gocodex_ws_read",
+    "gocodex_ws_write"
+  ],
+  "private_common_symbols": [
+    "gocodex_ffi_private_OPENSSL_ia32cap_P"
+  ],
+  "vendored_openssl": true
+}
