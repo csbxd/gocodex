@@ -20,8 +20,9 @@ var (
 	ErrBodyClosed   = errors.New("codexhttp: response body is closed")
 )
 
-// Error reports a Rust-side failure. Kind is invalid_input, request, timeout,
-// cancelled, closed, internal, or panic. HTTP 4xx/5xx statuses are not errors.
+// Error reports a Rust-side failure. Kind is invalid_input, configuration,
+// request, timeout, cancelled, closed, internal, or panic.
+// HTTP 4xx/5xx statuses are not errors.
 type Error = bridge.Error
 
 // Version returns the shared Rust bridge version.
@@ -40,6 +41,8 @@ const (
 type Options struct {
 	Timeout            time.Duration
 	ProxyPolicy        ProxyPolicy
+	ProxyURL           string // Explicit http/https/socks5/socks5h proxy; overrides ProxyPolicy and environment proxies.
+	NoProxy            bool   // Force a direct connection; mutually exclusive with ProxyURL.
 	DisableRedirects   bool
 	UserAgent          string
 	ChatGPTCookies     []string
@@ -53,11 +56,18 @@ type Client struct {
 	handle uint64
 }
 
-// NewClient initializes a reusable SDK route-aware pool. Transport clients and
-// custom CA configuration are built lazily on the first request for each route.
+// NewClient initializes a reusable SDK client. Automatic routing builds
+// transports lazily; ProxyURL and NoProxy build a fixed-route client immediately.
+// Explicit routing cannot be combined with TLSBackendFallback.
 func NewClient(options Options) (*Client, error) {
 	if options.Timeout < 0 {
 		return nil, errors.New("codexhttp: Timeout must not be negative")
+	}
+	if options.NoProxy && options.ProxyURL != "" {
+		return nil, errors.New("httpclient: ProxyURL and NoProxy are mutually exclusive")
+	}
+	if (options.NoProxy || options.ProxyURL != "") && options.TLSBackendFallback {
+		return nil, errors.New("httpclient: TLSBackendFallback requires automatic proxy routing")
 	}
 	if options.ProxyPolicy == "" {
 		options.ProxyPolicy = RespectSystemProxy
@@ -68,11 +78,13 @@ func NewClient(options Options) (*Client, error) {
 	config, err := json.Marshal(struct {
 		TimeoutMS          uint64      `json:"timeout_ms"`
 		ProxyPolicy        ProxyPolicy `json:"proxy_policy"`
+		ProxyURL           string      `json:"proxy_url"`
+		NoProxy            bool        `json:"no_proxy"`
 		DisableRedirects   bool        `json:"disable_redirects"`
 		UserAgent          string      `json:"user_agent"`
 		ChatGPTCookies     []string    `json:"chatgpt_cookies"`
 		TLSBackendFallback bool        `json:"tls_backend_fallback"`
-	}{durationMS(options.Timeout), options.ProxyPolicy, options.DisableRedirects,
+	}{durationMS(options.Timeout), options.ProxyPolicy, options.ProxyURL, options.NoProxy, options.DisableRedirects,
 		options.UserAgent, options.ChatGPTCookies, options.TLSBackendFallback})
 	if err != nil {
 		return nil, err

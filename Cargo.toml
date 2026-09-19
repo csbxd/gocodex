@@ -15,6 +15,8 @@ exclude = ["codex"]
 [dependencies]
 # Bundle OpenSSL so consumers need neither libssl-dev nor libssl at runtime.
 openssl = { version = "0.10", features = ["vendored"] }
+# Explicit per-client proxy configuration, wrapped by codex-http-client below.
+reqwest = { version = "0.12.28", features = ["socks"] }
 base64 = "0.22"
 bytes = "1"
 futures-util = { version = "0.3", features = ["sink"] }
@@ -37,3 +39,6 @@ tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev 
 
 [profile.release]
 debug = 0
+
+[dev-dependencies]
+pretty_assertions = "1.4"

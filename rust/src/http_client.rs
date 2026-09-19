@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use tokio_util::sync::CancellationToken;
 
-use crate::{BridgeError, Output, runtime::run};
+use crate::{BridgeError, Output, route_aware_redirect as redirects, runtime::run};
 use codex_http_client::{
-    ClientRouteClass, HttpClientFactory, OutboundProxyPolicy, RouteAwareClientPool,
-    RouteAwareRequestBuilder,
+    ClientRouteClass, HttpClient, HttpClientFactory, HttpResponse, OutboundProxyPolicy,
+    RouteAwareClientPool, RouteAwareRequestBuilder, build_reqwest_client_with_custom_ca,
 };
 
 #[derive(Default, Deserialize)]
@@ -22,6 +22,8 @@ use codex_http_client::{
 struct Config {
     timeout_ms: u64,
     proxy_policy: String,
+    proxy_url: String,
+    no_proxy: bool,
     disable_redirects: bool,
     user_agent: String,
     chatgpt_cookies: Option<Vec<String>>,
@@ -50,16 +52,138 @@ struct Response {
 }
 
 struct Client {
-    inner: RouteAwareClientPool,
+    inner: ClientBackend,
     timeout_ms: u64,
     user_agent: Option<HeaderValue>,
     cancel: CancellationToken,
 }
 
+enum ClientBackend {
+    Automatic(Box<RouteAwareClientPool>),
+    Fixed(FixedClient),
+}
+
+struct FixedClient {
+    raw: reqwest::Client,
+    sdk: HttpClient,
+    follow_redirects: bool,
+}
+
+enum PreparedRequest {
+    Automatic(Box<RouteAwareRequestBuilder>),
+    Fixed {
+        client: HttpClient,
+        request: Box<reqwest::Request>,
+        follow_redirects: bool,
+    },
+}
+
+impl PreparedRequest {
+    async fn send(self) -> Result<HttpResponse, BridgeError> {
+        match self {
+            Self::Automatic(builder) => builder.send().await.map_err(Into::into),
+            Self::Fixed {
+                client,
+                request,
+                follow_redirects,
+            } => send_fixed(client, *request, follow_redirects).await,
+        }
+    }
+}
+
+async fn send_fixed(
+    client: HttpClient,
+    mut request: reqwest::Request,
+    follow: bool,
+) -> Result<HttpResponse, BridgeError> {
+    let deadline = request
+        .timeout()
+        .map(|timeout| tokio::time::Instant::now() + *timeout);
+    let send = async move {
+        let mut hops = 0;
+        loop {
+            let remaining =
+                deadline.map(|end| end.saturating_duration_since(tokio::time::Instant::now()));
+            let mut builder = client
+                .request(request.method().clone(), request.url().clone())
+                .headers(request.headers().clone());
+            if let Some(remaining) = remaining {
+                builder = builder.timeout(remaining);
+            }
+            if let Some(body) = request.body() {
+                let bytes = body
+                    .as_bytes()
+                    .ok_or_else(|| BridgeError::new("internal", "unbuffered bridge request"))?;
+                builder = builder.body(bytes.to_vec());
+            }
+            let response = builder.send().await?;
+            if !follow || !redirects::is_redirect(response.status()) {
+                return Ok(response);
+            }
+            let Some(next_url) = redirects::redirect_url(&response) else {
+                return Ok(response);
+            };
+            if !matches!(next_url.scheme(), "http" | "https") {
+                return Err(BridgeError::new(
+                    "request",
+                    "redirect target must use http or https",
+                ));
+            }
+            if hops >= redirects::MAX_REDIRECTS {
+                return Err(BridgeError::new("request", "too many redirects"));
+            }
+            let Some(mut next) = redirects::redirect_request(
+                response.status(),
+                request.method().clone(),
+                request.headers().clone(),
+                request.version(),
+                remaining,
+                request.try_clone(),
+                next_url,
+            ) else {
+                return Ok(response);
+            };
+            let next_url = next.url().clone();
+            redirects::remove_sensitive_headers(next.headers_mut(), request.url(), &next_url);
+            redirects::insert_referer(next.headers_mut(), request.url(), &next_url);
+            request = next;
+            hops += 1;
+            // A fresh SDK send recomputes proxy authentication for every hop.
+            // Native reqwest redirects can strip that header across origins.
+        }
+    };
+    if let Some(end) = deadline {
+        tokio::time::timeout_at(end, send)
+            .await
+            .map_err(|_| BridgeError::new("timeout", "request timed out"))?
+    } else {
+        send.await
+    }
+}
+
+// Delegate cookie scope and filtering to the SDK even when a fixed proxy is used.
+struct SdkCookieStore(HttpClientFactory);
+
+impl reqwest::cookie::CookieStore for SdkCookieStore {
+    fn set_cookies(&self, cookies: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url) {
+        if let Ok(uri) = url.as_str().parse::<http::Uri>() {
+            let mut headers = HeaderMap::new();
+            for cookie in cookies {
+                headers.append(http::header::SET_COOKIE, cookie.clone());
+            }
+            self.0.store_chatgpt_response_cookies(&uri, &headers);
+        }
+    }
+
+    fn cookies(&self, url: &url::Url) -> Option<HeaderValue> {
+        self.0.chatgpt_cookie_header(&url.as_str().parse().ok()?)
+    }
+}
+
 type BodyStream = Pin<Box<dyn Stream<Item = Result<Bytes, codex_http_client::HttpError>> + Send>>;
 
 enum Phase {
-    Ready(Box<RouteAwareRequestBuilder>),
+    Ready(PreparedRequest),
     Streaming { stream: BodyStream, pending: Bytes },
     Done,
 }
@@ -103,6 +227,22 @@ pub(crate) fn create(config: &[u8]) -> Result<Output, BridgeError> {
         "reqwest_default" => OutboundProxyPolicy::ReqwestDefault,
         _ => return Err(BridgeError::invalid("invalid proxy policy")),
     };
+    if config.no_proxy && !config.proxy_url.is_empty() {
+        return Err(BridgeError::invalid(
+            "proxy_url and no_proxy are mutually exclusive",
+        ));
+    }
+    let explicit_route = config.no_proxy || !config.proxy_url.is_empty();
+    if explicit_route && config.tls_backend_fallback {
+        return Err(BridgeError::invalid(
+            "TLSBackendFallback requires automatic proxy routing",
+        ));
+    }
+    let proxy = if config.proxy_url.is_empty() {
+        None
+    } else {
+        Some(parse_proxy(&config.proxy_url)?)
+    };
     let cookies = config
         .chatgpt_cookies
         .unwrap_or_default()
@@ -110,17 +250,6 @@ pub(crate) fn create(config: &[u8]) -> Result<Output, BridgeError> {
         .map(|value| HeaderValue::from_str(&value).map_err(|e| BridgeError::invalid(e.to_string())))
         .collect::<Result<Vec<_>, _>>()?;
     let factory = HttpClientFactory::new(policy).with_chatgpt_cookies(cookies);
-    let mut pool = if config.disable_redirects {
-        RouteAwareClientPool::new_without_redirects_or_request_logging(
-            factory,
-            ClientRouteClass::Api,
-        )
-    } else {
-        RouteAwareClientPool::new_without_request_logging(factory, ClientRouteClass::Api)
-    };
-    if config.tls_backend_fallback {
-        pool = pool.with_tls_backend_fallback();
-    }
     let user_agent = if config.user_agent.is_empty() {
         None
     } else {
@@ -129,16 +258,72 @@ pub(crate) fn create(config: &[u8]) -> Result<Output, BridgeError> {
                 .map_err(|e| BridgeError::invalid(e.to_string()))?,
         )
     };
-    let client = Arc::new(Client {
-        inner: pool,
-        timeout_ms: config.timeout_ms,
-        user_agent,
-        cancel: CancellationToken::new(),
-    });
-    let mut registry = registry()?;
-    let id = registry.next()?;
-    registry.clients.insert(id, client);
-    Ok(Output::handle(id))
+    run(async move {
+        let inner = if explicit_route {
+            // The SDK's route-aware pool does not expose fixed proxy selection.
+            // Configure the underlying builder, then retain SDK CA handling,
+            // request tracing and HttpClient/RequestBuilder for all network I/O.
+            let mut builder = reqwest::Client::builder().no_proxy();
+            if let Some(proxy) = proxy {
+                builder = builder.proxy(proxy);
+            }
+            builder = builder.redirect(reqwest::redirect::Policy::none());
+            if factory.has_chatgpt_cookies() {
+                builder = builder.cookie_provider(Arc::new(SdkCookieStore(factory)));
+            }
+            let inner = build_reqwest_client_with_custom_ca(builder)
+                .map_err(|error| BridgeError::new("configuration", error.to_string()))?;
+            ClientBackend::Fixed(FixedClient {
+                sdk: HttpClient::new_without_request_logging(inner.clone()),
+                raw: inner,
+                follow_redirects: !config.disable_redirects,
+            })
+        } else {
+            let mut pool = match (config.disable_redirects, factory.has_chatgpt_cookies()) {
+                (true, true) => RouteAwareClientPool::with_chatgpt_cloudflare_cookies_without_redirects_or_request_logging(factory, ClientRouteClass::Api),
+                (false, true) => RouteAwareClientPool::with_chatgpt_cloudflare_cookies_without_request_logging(factory, ClientRouteClass::Api),
+                (true, false) => RouteAwareClientPool::new_without_redirects_or_request_logging(factory, ClientRouteClass::Api),
+                (false, false) => RouteAwareClientPool::new_without_request_logging(factory, ClientRouteClass::Api),
+            };
+            if config.tls_backend_fallback {
+                pool = pool.with_tls_backend_fallback();
+            }
+            ClientBackend::Automatic(Box::new(pool))
+        };
+        let client = Arc::new(Client {
+            inner,
+            timeout_ms: config.timeout_ms,
+            user_agent,
+            cancel: CancellationToken::new(),
+        });
+        let mut registry = registry()?;
+        let id = registry.next()?;
+        registry.clients.insert(id, client);
+        Ok(Output::handle(id))
+    })
+}
+
+fn parse_proxy(value: &str) -> Result<reqwest::Proxy, BridgeError> {
+    // Never include the supplied URL in validation errors: it may carry a password.
+    let url = url::Url::parse(value).map_err(|_| BridgeError::invalid("invalid ProxyURL"))?;
+    if !matches!(url.scheme(), "http" | "https" | "socks5" | "socks5h") {
+        return Err(BridgeError::invalid(
+            "ProxyURL must use http, https, socks5 or socks5h",
+        ));
+    }
+    if url.host_str().is_none()
+        || url.port() == Some(0)
+        || !matches!(url.path(), "" | "/")
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(BridgeError::invalid(
+            "ProxyURL requires a host and valid port, without a path, query or fragment",
+        ));
+    }
+    reqwest::Proxy::all(url)
+        .map(|proxy| proxy.no_proxy(None))
+        .map_err(|_| BridgeError::invalid("invalid ProxyURL"))
 }
 
 pub(crate) fn close(id: u64) -> Result<Output, BridgeError> {
@@ -202,20 +387,35 @@ pub(crate) fn create_request(
             .entry(http::header::USER_AGENT)
             .or_insert(user_agent.clone());
     }
-    let mut builder = client.inner.request(method, url).headers(headers);
-    if client.timeout_ms > 0 {
-        builder = builder.timeout(Duration::from_millis(client.timeout_ms));
+    macro_rules! prepare {
+        ($builder:expr) => {{
+            let mut builder = $builder.headers(headers);
+            if client.timeout_ms > 0 {
+                builder = builder.timeout(Duration::from_millis(client.timeout_ms));
+            }
+            if request.has_json {
+                // RawValue preserves large JSON numbers. None serializes as JSON null.
+                builder = builder.json(&request.json);
+            } else if request.has_body {
+                builder = builder.body(body.to_vec());
+            }
+            Box::new(builder)
+        }};
     }
-    if request.has_json {
-        // RawValue preserves large JSON numbers. None serializes as JSON null.
-        builder = builder.json(&request.json);
-    } else if request.has_body {
-        builder = builder.body(body.to_vec());
-    }
+    let prepared = match &client.inner {
+        ClientBackend::Automatic(pool) => {
+            PreparedRequest::Automatic(prepare!(pool.request(method, url)))
+        }
+        ClientBackend::Fixed(fixed) => PreparedRequest::Fixed {
+            client: fixed.sdk.clone(),
+            request: Box::new(prepare!(fixed.raw.request(method, url)).build()?),
+            follow_redirects: fixed.follow_redirects,
+        },
+    };
     let call = Arc::new(Call {
         client_id,
         cancel: client.cancel.child_token(),
-        phase: tokio::sync::Mutex::new(Phase::Ready(Box::new(builder))),
+        phase: tokio::sync::Mutex::new(Phase::Ready(prepared)),
     });
     let mut registry = registry()?;
     // Client.Close may have raced with request construction.

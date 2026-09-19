@@ -18,7 +18,9 @@ parser.add_argument('--cc', help='cross C compiler, if needed by the maintainer 
 parser.add_argument('--runner', default='', help='optional emulator command for the consumer binary')
 args = parser.parse_args()
 (ROOT/'target').mkdir(exist_ok=True)
-work = Path(tempfile.mkdtemp(prefix='consumer-', dir=ROOT/'target'))
+# Go's ./... package walk ignores underscore-prefixed directories, including
+# module caches being removed while another test suite runs concurrently.
+work = Path(tempfile.mkdtemp(prefix='_consumer-', dir=ROOT/'target'))
 proxy = work/'proxy'
 consumer = work/'app'
 consumer.mkdir()
@@ -49,7 +51,22 @@ for package in (['httpclient', 'websocket'] if args.packages == 'both' else [arg
     response, err := hc.Get(ctx, server.URL+"/http"); must(err)
     body, err := io.ReadAll(response.Body); must(err); must(response.Body.Close())
     if string(body)!="native-http" { panic("HTTP body mismatch") }
-    fmt.Println("HTTP native archive OK")''')
+    fmt.Println("HTTP native archive OK")
+    transport, err := h.NewTransport(h.Options{}); must(err)
+    standardClient := &http.Client{Transport:transport, Timeout:10*time.Second}
+    standardResponse, err := standardClient.Get(server.URL+"/http"); must(err)
+    standardBody, err := io.ReadAll(standardResponse.Body); must(err); must(standardResponse.Body.Close())
+    if string(standardBody)!="native-http" { panic("RoundTripper body mismatch") }
+    fmt.Println("net/http RoundTripper OK")
+    proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if !r.URL.IsAbs() || r.URL.Host != "unresolvable.invalid" { panic("proxy target mismatch") }
+        _, _ = io.WriteString(w, "native-proxy")
+    })); defer proxy.Close()
+    proxyTransport, err := h.NewTransport(h.Options{ProxyURL:proxy.URL}); must(err)
+    proxyResponse, err := (&http.Client{Transport:proxyTransport, Timeout:10*time.Second}).Get("http://unresolvable.invalid/"); must(err)
+    proxyBody, err := io.ReadAll(proxyResponse.Body); must(err); must(proxyResponse.Body.Close())
+    if string(proxyBody)!="native-proxy" { panic("proxy body mismatch") }
+    fmt.Println("explicit HTTP proxy OK")''')
     else:
         imports.append('ws "'+modules[0]+'/websocket"')
         checks.append('''wc, err := ws.NewClient(ws.Options{LoopbackDirect:true}); must(err); defer wc.Close()

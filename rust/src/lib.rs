@@ -7,6 +7,9 @@
 mod http_client;
 mod runtime;
 mod websocket_client;
+// Reuse the pinned SDK's redirect rules and its credential-stripping policy.
+#[path = "../../codex/codex-rs/http-client/src/route_aware_redirect.rs"]
+mod route_aware_redirect;
 
 use serde::Serialize;
 use std::ffi::c_char;

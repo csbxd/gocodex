@@ -11,7 +11,8 @@ import "github.com/csbxd/gocodex/websocket"
 
 两个包共用 `internal/bridge`、Rust C ABI、Tokio 运行时及原生依赖。
 每个架构只分发一份 `libgocodex_ffi.a`，支持单独使用任一包或同时使用。
-客户端的请求、连接、取消状态及 cookie store 仍各自独立。
+客户端的请求、连接、取消状态和显式配置的 Cookie 各自独立。
+SDK 的 ChatGPT 基础设施 Cookie 缓存按进程共享。
 
 ## 使用
 
@@ -57,7 +58,21 @@ err = conn.WriteMessage(ctx, websocket.TextMessage, []byte("hello"))
 ```
 
 完整接口说明见 [HTTP](httpclient/README.md) 和 [WebSocket](websocket/README.md)。
-可运行示例位于 `examples/http`、`examples/echo`。
+`httpclient.NewTransport(options)` 还提供标准 `http.RoundTripper` 实现：
+
+```go
+transport, err := httpclient.NewTransport(httpclient.Options{})
+if err != nil { return err }
+client := &http.Client{Transport: transport}
+```
+
+正常使用只需关闭每次返回的 `response.Body`；连接池跨请求复用，Transport 不要求显式关闭。
+
+HTTP 的 `NewClient` 和 `NewTransport` 均支持 `Options{ProxyURL: "http://127.0.0.1:7890"}`，
+可使用 HTTP、HTTPS、SOCKS5/SOCKS5h 代理及用户名密码认证。
+显式代理覆盖环境变量；`Options{NoProxy: true}` 强制直连。详见 [指定代理](httpclient/README.md#指定代理)。
+
+可运行示例位于 `examples/http`、`examples/roundtripper`、`examples/echo`。
 
 ## 目录
 
@@ -129,7 +144,7 @@ make notices
 
 - Linux arm64：完整 Go 测试、跨传输并发和关闭隔离测试、race、cgocheck2、go vet。
 - Linux amd64：交叉构建后通过 QEMU + Debian glibc 2.36 运行完整 Go 测试。
-- Rust：6 个 ABI/资源管理测试、rustfmt、Clippy（`-D warnings`）。
+- Rust：ABI/资源管理及 SDK 重定向规则测试、rustfmt、Clippy（`-D warnings`）。
 - 两种架构均通过外部模块下载、同时导入两个包、vendor 构建及独立运行验证；
   arm64 还验证了仅导入 `httpclient` 或仅导入 `websocket`。
 
