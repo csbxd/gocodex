@@ -68,6 +68,8 @@ impl From<codex_http_client::HttpError> for BridgeError {
             "timeout"
         } else if error.is_builder() {
             "invalid_input"
+        } else if is_dns_error(&error) {
+            "dns"
         } else if is_unexpected_eof(&error) {
             "unexpected_eof"
         } else {
@@ -77,6 +79,24 @@ impl From<codex_http_client::HttpError> for BridgeError {
         let error = error.without_url();
         Self::from_source(kind, &error)
     }
+}
+
+fn is_dns_error(error: &codex_http_client::HttpError) -> bool {
+    if !error.is_connect() {
+        return false;
+    }
+    // Hyper's DNS connector error type is private. Its source node has this
+    // fixed phase label, independent of the resolver's localized cause. Match
+    // the node only during connection establishment, never a response body or
+    // a flattened message containing the same words.
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        if cause.to_string() == "dns error" && cause.source().is_some() {
+            return true;
+        }
+        source = cause.source();
+    }
+    false
 }
 
 // Preserve the HTTP framing failure independently of backend error wording.
@@ -319,6 +339,31 @@ pub extern "C" fn gocodex_ws_connection_close(id: u64) -> FfiResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn dns_classification_does_not_depend_on_resolver_wording() {
+        struct FailingResolver;
+        impl reqwest::dns::Resolve for FailingResolver {
+            fn resolve(&self, _: reqwest::dns::Name) -> reqwest::dns::Resolving {
+                Box::pin(async { Err(std::io::Error::other("opaque resolver failure").into()) })
+            }
+        }
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .dns_resolver(std::sync::Arc::new(FailingResolver))
+            .build()
+            .unwrap();
+        let error = client
+            .get("http://dns-fixture.invalid/private?token=secret")
+            .send()
+            .await
+            .unwrap_err();
+        let error = BridgeError::from(error);
+        assert_eq!(error.kind, "dns");
+        assert!(error.message.contains("opaque resolver failure"));
+        assert!(!error.message.contains("private"));
+        assert!(!error.message.contains("secret"));
+    }
 
     #[test]
     fn premature_eof_uses_error_types_not_backend_messages() {

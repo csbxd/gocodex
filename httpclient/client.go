@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/csbxd/gocodex/internal/bridge"
 	"io"
+	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/csbxd/gocodex/internal/bridge"
 )
 
 var (
@@ -21,7 +23,7 @@ var (
 )
 
 // Error reports a Rust-side failure. Kind is invalid_input, configuration,
-// request, timeout, cancelled, closed, internal, or panic.
+// request, dns, unexpected_eof, timeout, cancelled, closed, internal, or panic.
 // HTTP 4xx/5xx statuses are not errors.
 type Error = bridge.Error
 
@@ -255,6 +257,16 @@ func (c *Client) requestError(ctx context.Context, err error) error {
 	}
 	if c.id() == 0 {
 		return ErrClientClosed
+	}
+	var native *Error
+	if errors.As(err, &native) && native.Kind == "dns" {
+		// Preserve the dial-stage error chain used by net/http consumers. The
+		// native resolver does not expose Name/Server or reason flags; guessing
+		// them from the request URL would misidentify failed proxy lookups.
+		return &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{
+			Err:       native.Error(),
+			UnwrapErr: err,
+		}}
 	}
 	return err
 }

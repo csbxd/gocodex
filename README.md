@@ -151,6 +151,10 @@ HTTP 响应头或响应体未完整接收就遇到 EOF 时，原生错误的 `Ki
 `errors.Is(err, io.ErrUnexpectedEOF)` 判断；`errors.As` 仍能读取原生错误详情。
 正常响应结束仍返回 `io.EOF`，不会将截断的响应误判为正常结束。
 
+HTTP DNS 失败以 `net.OpError` / `net.DNSError` 包装，`errors.As` 仍能读取
+`Kind` 为 `dns` 的原生错误。原生解析器未提供的域名、服务器及原因标志保留默认值，
+避免将代理解析失败错误地标记为目标域名失败。
+
 ## 已验证
 
 - Linux arm64：完整 Go 测试、跨传输并发和关闭隔离测试、race、cgocheck2、go vet。
