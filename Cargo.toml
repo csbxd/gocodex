@@ -24,6 +24,8 @@ futures = "0.3"
 rustls = "0.23.45"
 tokio-rustls = "0.26.4"
 http = "1"
+# Inspect typed premature-EOF causes from the SDK's HTTP backend.
+hyper = "1"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }

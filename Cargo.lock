@@ -607,6 +607,7 @@ dependencies = [
  "futures",
  "futures-util",
  "http",
+ "hyper",
  "libc",
  "openssl",
  "pretty_assertions",

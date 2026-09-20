@@ -68,12 +68,34 @@ impl From<codex_http_client::HttpError> for BridgeError {
             "timeout"
         } else if error.is_builder() {
             "invalid_input"
+        } else if is_unexpected_eof(&error) {
+            "unexpected_eof"
         } else {
             "request"
         };
         // Preserve the source chain (including TLS errors), without the URL.
         let error = error.without_url();
         Self::from_source(kind, &error)
+    }
+}
+
+// Preserve the HTTP framing failure independently of backend error wording.
+// Clean response EOF is returned separately by the ABI and never reaches here.
+fn is_unexpected_eof(mut error: &(dyn std::error::Error + 'static)) -> bool {
+    loop {
+        if error
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::UnexpectedEof)
+            || error
+                .downcast_ref::<hyper::Error>()
+                .is_some_and(hyper::Error::is_incomplete_message)
+        {
+            return true;
+        }
+        match error.source() {
+            Some(source) => error = source,
+            None => return false,
+        }
     }
 }
 
@@ -297,6 +319,18 @@ pub extern "C" fn gocodex_ws_connection_close(id: u64) -> FfiResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn premature_eof_uses_error_types_not_backend_messages() {
+        let truncated =
+            std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "opaque read failure");
+        assert!(is_unexpected_eof(&truncated));
+        let other = std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "connection closed before message completed; end of file before message length reached",
+        );
+        assert!(!is_unexpected_eof(&other));
+    }
 
     fn error_kind(result: FfiResult) -> String {
         assert_eq!(result.code, 1);

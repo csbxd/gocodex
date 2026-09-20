@@ -1,6 +1,9 @@
 package bridge
 
-import "net"
+import (
+	"io"
+	"net"
+)
 
 // Error carries an SDK or ABI failure. Both public packages expose this type.
 type Error struct {
@@ -8,7 +11,20 @@ type Error struct {
 	Message string `json:"message"`
 }
 
-func (e *Error) Error() string { return "gocodex: " + e.Kind + ": " + e.Message }
+func (e *Error) Error() string {
+	message := e.Message
+	if e.Kind == "unexpected_eof" {
+		message = io.ErrUnexpectedEOF.Error() + ": " + message
+	}
+	return "gocodex: " + e.Kind + ": " + message
+}
+
+// Is preserves a native premature HTTP EOF while retaining the backend details.
+// It must not match io.EOF: truncated responses are failures, not clean endings.
+func (e *Error) Is(target error) bool {
+	return e.Kind == "unexpected_eof" && target == io.ErrUnexpectedEOF
+}
+
 func (e *Error) Timeout() bool { return e.Kind == "timeout" }
 
 // Temporary completes net.Error so callers can recognize native timeouts.

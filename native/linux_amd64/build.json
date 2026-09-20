@@ -1,17 +1,17 @@
 {
   "archive": "libgocodex_ffi.a",
-  "sha256": "3c590fdc87e3d757d541f531054a43cec117bcba3196c8d0328649004ca82cdb",
+  "sha256": "ce1375b18082c4ddef2fa4740cb594f23f024c3d88b62b95a820e1cf4e1eca93",
   "target": "x86_64-unknown-linux-gnu",
   "glibc_baseline": "2.17",
   "rustc": "rustc 1.98.1 (48a229cea 2026-09-01) (gentoo)",
   "zig": "0.15.2",
   "sdk_commit": "78245b47af2a7aafcabe025828ceecca69db4df1",
-  "cargo_lock_sha256": "893f1a6fb46368aea13c07a6f23fcdb076cc6696e26565e54bc61f2a91c67ac1",
+  "cargo_lock_sha256": "2b339565e4e746f9bca630600075ddcf57ac93f326a65c213758cad43798a283",
   "bridge_source_sha256": {
     "build.rs": "b2934a8b79a1871d47033b12ddd05b1a28096acb659a0ede12a22672a0b513bf",
-    "Cargo.toml": "8011acfabbf615a522a4f55ce55054d9d7eb17cb0a44344c0cb1bacd8141d97c",
+    "Cargo.toml": "171090c3d963d4f225af6331324815a66d95e6b39d5a83e34bdc730733a14315",
     "rust/src/http_client.rs": "bf9df54c502848ba7e813cc8a9e46849717153fb3af9c5e87475ddca395355af",
-    "rust/src/lib.rs": "42940e7128eb72561d362b768154aa355d521656c72003699b10b44dbc864e98",
+    "rust/src/lib.rs": "d9a20db3d2ea0b15e86e4598bd4f187da27f1cab4797e72bbee0d5c65ae373d9",
     "rust/src/runtime.rs": "3488c92fc2f618dc354c67599392c313ceb93a9a1055310b44ed616b8252c6c6",
     "rust/src/websocket_client.rs": "b2ff48763a87162ee173282562a10fff499923f470d74acd5295cddc61e09381"
   },

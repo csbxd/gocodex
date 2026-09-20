@@ -147,6 +147,10 @@ make notices
 识别；调用方取消仍返回原有 context 错误。HTTP 自动路由与显式路由均保留底层
 连接错误原因，并从原生请求错误中移除请求 URL。
 
+HTTP 响应头或响应体未完整接收就遇到 EOF 时，原生错误的 `Kind` 为 `unexpected_eof`，可用
+`errors.Is(err, io.ErrUnexpectedEOF)` 判断；`errors.As` 仍能读取原生错误详情。
+正常响应结束仍返回 `io.EOF`，不会将截断的响应误判为正常结束。
+
 ## 已验证
 
 - Linux arm64：完整 Go 测试、跨传输并发和关闭隔离测试、race、cgocheck2、go vet。
