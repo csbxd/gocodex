@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
@@ -77,6 +78,7 @@ struct Connection {
     // between fragments. Tokio's write-preferring RwLock prioritizes controls.
     data_write: AsyncMutex<()>,
     control_gate: RwLock<()>,
+    peer_close_received: AtomicBool,
 }
 
 #[derive(Default)]
@@ -109,6 +111,14 @@ impl From<WsError> for BridgeError {
         if matches!(
             error,
             WsError::Protocol(
+                tokio_tungstenite::tungstenite::error::ProtocolError::HandshakeIncomplete
+            )
+        ) {
+            return Self::new("unexpected_eof", error.to_string());
+        }
+        if matches!(
+            error,
+            WsError::Protocol(
                 tokio_tungstenite::tungstenite::error::ProtocolError::SendAfterClosing
             )
         ) {
@@ -116,6 +126,28 @@ impl From<WsError> for BridgeError {
         }
         Self::new("websocket", error.to_string())
     }
+}
+
+fn write_error(conn: &Connection, error: WsError) -> BridgeError {
+    if conn.peer_close_received.load(Ordering::Acquire) {
+        // Do not let the Go writer cancel a reader which already has the peer's
+        // terminal frame. That frame remains authoritative if acknowledgement fails.
+        return BridgeError::new("closing", "WebSocket peer close has been received");
+    }
+    if let WsError::Io(ref io) = error
+        && matches!(
+            io.kind(),
+            std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::NotConnected
+        )
+    {
+        // The read direction may still contain the peer's terminal frame.
+        // Let a concurrent reader finish before consumers classify this write.
+        return BridgeError::new("closing", error.to_string());
+    }
+    error.into()
 }
 
 fn cancelled() -> BridgeError {
@@ -287,6 +319,7 @@ pub(crate) fn create_connection(client_id: u64, data: &[u8]) -> Result<Output, B
         writer: AsyncMutex::new(None),
         data_write: AsyncMutex::new(()),
         control_gate: RwLock::new(()),
+        peer_close_received: AtomicBool::new(false),
     });
     let mut registry = registry()?;
     if !registry.clients.contains_key(&client_id) {
@@ -372,6 +405,9 @@ pub(crate) fn read(id: u64) -> Result<Output, BridgeError> {
             result = async {
                 let mut reader = conn.reader.lock().await;
                 let reader = reader.as_mut().ok_or_else(|| BridgeError::invalid("connection not established"))?;
+                if conn.peer_close_received.load(Ordering::Acquire) {
+                    return Ok(Output::eof());
+                }
                 loop {
                     let message = match reader.next().await {
                         None | Some(Err(WsError::ConnectionClosed)) => return Ok(Output::eof()),
@@ -383,6 +419,7 @@ pub(crate) fn read(id: u64) -> Result<Output, BridgeError> {
                         Message::Ping(data) => (9, data.to_vec()),
                         Message::Pong(data) => (10, data.to_vec()),
                         Message::Close(frame) => {
+                            conn.peer_close_received.store(true, Ordering::Release);
                             let mut data = Vec::new();
                             if let Some(frame) = frame {
                                 data.extend_from_slice(&u16::from(frame.code).to_be_bytes());
@@ -398,6 +435,9 @@ pub(crate) fn read(id: u64) -> Result<Output, BridgeError> {
                         if let Some(writer) = conn.writer.lock().await.as_mut() {
                             match writer.flush().await {
                                 Ok(()) | Err(WsError::ConnectionClosed) => {},
+                                // A failed acknowledgement cannot replace a received
+                                // Close (e.g. 1009) with a retryable socket failure.
+                                Err(_) if kind == 8 => {},
                                 Err(error) => return Err(error.into()),
                             }
                         }
@@ -440,7 +480,7 @@ pub(crate) fn write(id: u64, kind: u8, data: &[u8]) -> Result<Output, BridgeErro
                             let _priority = conn.control_gate.read().await;
                             let mut writer = conn.writer.lock().await;
                             writer.as_mut().ok_or_else(|| BridgeError::invalid("connection not established"))?
-                                .send(Message::Frame(frame)).await?;
+                                .send(Message::Frame(frame)).await.map_err(|error| write_error(&conn, error))?;
                         }
                         if end == data.len() { break; }
                         offset = end;
@@ -484,7 +524,7 @@ pub(crate) fn write(id: u64, kind: u8, data: &[u8]) -> Result<Output, BridgeErro
                 let _priority = conn.control_gate.write().await;
                 let mut writer = conn.writer.lock().await;
                 writer.as_mut().ok_or_else(|| BridgeError::invalid("connection not established"))?
-                    .send(message).await?;
+                    .send(message).await.map_err(|error| write_error(&conn, error))?;
                 Ok(Output::handle(0))
             } => result,
         }

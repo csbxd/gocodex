@@ -19,7 +19,7 @@ func (e *Error) Error() string {
 	return "gocodex: " + e.Kind + ": " + message
 }
 
-// Is preserves a native premature HTTP EOF while retaining the backend details.
+// Is preserves a native premature EOF while retaining the backend details.
 // It must not match io.EOF: truncated responses are failures, not clean endings.
 func (e *Error) Is(target error) bool {
 	return e.Kind == "unexpected_eof" && target == io.ErrUnexpectedEOF

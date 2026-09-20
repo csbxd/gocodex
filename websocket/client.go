@@ -282,7 +282,8 @@ func (c *Conn) operationError(ctx context.Context, err error) error {
 }
 
 // ReadMessage returns a complete message. Ping and close frames are returned
-// after the SDK flushes its automatic reply. A close payload contains a big-endian
+// after the SDK attempts its automatic reply. A received Close is preserved even
+// when its acknowledgement fails. A close payload contains a big-endian
 // uint16 status followed by a UTF-8 reason, or is empty. Clean termination returns
 // io.EOF; protocol and transport failures return *Error.
 func (c *Conn) ReadMessage(ctx context.Context) (MessageType, []byte, error) {

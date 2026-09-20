@@ -1,6 +1,6 @@
 {
   "archive": "libgocodex_ffi.a",
-  "sha256": "2089463bbf3bbd2ef7fed40c8567102d1286ccfd14dd7e731d224a206678d89c",
+  "sha256": "233b5d40c75b6dcac73fc0ffd5a4b3b5567c8d8d7cd4c281d3793956d2847134",
   "target": "x86_64-unknown-linux-gnu",
   "glibc_baseline": "2.17",
   "rustc": "rustc 1.98.1 (48a229cea 2026-09-01) (gentoo)",
@@ -13,7 +13,7 @@
     "rust/src/http_client.rs": "bf9df54c502848ba7e813cc8a9e46849717153fb3af9c5e87475ddca395355af",
     "rust/src/lib.rs": "117987a15a3283b147afe52565a5283aae9ebe720df508317b89a2565534bf5b",
     "rust/src/runtime.rs": "3488c92fc2f618dc354c67599392c313ceb93a9a1055310b44ed616b8252c6c6",
-    "rust/src/websocket_client.rs": "b2ff48763a87162ee173282562a10fff499923f470d74acd5295cddc61e09381"
+    "rust/src/websocket_client.rs": "cdd4cf8d220bf42eca0fd849a0084de1d20e63a3381e05d948acc58624cac294"
   },
   "exports": [
     "gocodex_bridge_version",
