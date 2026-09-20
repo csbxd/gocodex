@@ -72,6 +72,8 @@ impl From<codex_http_client::HttpError> for BridgeError {
             "dns"
         } else if is_unexpected_eof(&error) {
             "unexpected_eof"
+        } else if error.is_connect() && has_handshake_failure_source(&error) {
+            "connect"
         } else {
             "request"
         };
@@ -91,12 +93,57 @@ fn is_dns_error(error: &codex_http_client::HttpError) -> bool {
     // a flattened message containing the same words.
     let mut source = std::error::Error::source(error);
     while let Some(cause) = source {
-        if cause.to_string() == "dns error" && cause.source().is_some() {
+        if matches!(
+            cause.to_string().as_str(),
+            "dns error" | "error resolving for socks proxy"
+        ) && cause.source().is_some()
+        {
             return true;
         }
         source = cause.source();
     }
     false
+}
+
+fn has_handshake_failure_source(mut error: &(dyn std::error::Error + 'static)) -> bool {
+    // OpenSSL's ssl.h/sslerr.h encode received TLS alerts as 1000 + alert byte.
+    // Local certificate verification failure is a different SSL reason code.
+    const SSL_LIBRARY: i32 = 20;
+    const CERTIFICATE_VERIFY_FAILED: i32 = 134;
+    const ALERT_REASON_OFFSET: i32 = 1000;
+    let mut recognized = false;
+    loop {
+        if let Some(tls) = error.downcast_ref::<rustls::Error>() {
+            match tls {
+                rustls::Error::InvalidCertificate(_) => return false,
+                rustls::Error::AlertReceived(_) => recognized = true,
+                _ => {}
+            }
+        }
+        if let Some(stack) = error.downcast_ref::<openssl::error::ErrorStack>() {
+            for error in stack.errors() {
+                if error.library_code() != SSL_LIBRARY {
+                    continue;
+                }
+                if error.reason_code() == CERTIFICATE_VERIFY_FAILED {
+                    return false;
+                }
+                if (ALERT_REASON_OFFSET..=ALERT_REASON_OFFSET + 255).contains(&error.reason_code())
+                {
+                    recognized = true;
+                }
+            }
+        }
+        // Reqwest's SOCKS error type is private; use its connection-phase node,
+        // not the operating-system wording or text from an HTTP response body.
+        if error.to_string() == "error connecting to socks proxy" && error.source().is_some() {
+            recognized = true;
+        }
+        match error.source() {
+            Some(source) => error = source,
+            None => return recognized,
+        }
+    }
 }
 
 // Preserve the HTTP framing failure independently of backend error wording.
@@ -339,6 +386,19 @@ pub extern "C" fn gocodex_ws_connection_close(id: u64) -> FfiResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tls_peer_alerts_are_distinct_from_local_certificate_failures() {
+        assert!(has_handshake_failure_source(&rustls::Error::AlertReceived(
+            rustls::AlertDescription::InternalError,
+        )));
+        assert!(!has_handshake_failure_source(
+            &rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer),
+        ));
+        assert!(!has_handshake_failure_source(&std::io::Error::other(
+            "tlsv1 alert internal error; SOCKS error: general server failure",
+        )));
+    }
 
     #[tokio::test]
     async fn dns_classification_does_not_depend_on_resolver_wording() {

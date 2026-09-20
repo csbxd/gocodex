@@ -23,7 +23,7 @@ var (
 )
 
 // Error reports a Rust-side failure. Kind is invalid_input, configuration,
-// request, dns, unexpected_eof, timeout, cancelled, closed, internal, or panic.
+// request, connect, dns, unexpected_eof, timeout, cancelled, closed, internal, or panic.
 // HTTP 4xx/5xx statuses are not errors.
 type Error = bridge.Error
 
@@ -267,6 +267,9 @@ func (c *Client) requestError(ctx context.Context, err error) error {
 			Err:       native.Error(),
 			UnwrapErr: err,
 		}}
+	}
+	if native != nil && native.Kind == "connect" {
+		return &net.OpError{Op: "dial", Net: "tcp", Err: err}
 	}
 	return err
 }

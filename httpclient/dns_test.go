@@ -26,6 +26,7 @@ func TestDNSFailurePreservesTransportTypes(t *testing.T) {
 		{"automatic", "http://" + host + "/?token=private-token", codexhttp.Options{}},
 		{"direct", "http://" + host + "/?token=private-token", codexhttp.Options{NoProxy: true}},
 		{"proxy", "http://127.0.0.1:1/", codexhttp.Options{ProxyURL: "http://" + host + ":8080"}},
+		{"SOCKS local lookup", "http://" + host + "/", codexhttp.Options{ProxyURL: "socks5://127.0.0.1:1"}},
 	} {
 		for _, api := range []string{"client", "transport"} {
 			t.Run(tc.name+"/"+api, func(t *testing.T) {

@@ -155,6 +155,10 @@ HTTP DNS 失败以 `net.OpError` / `net.DNSError` 包装，`errors.As` 仍能读
 `Kind` 为 `dns` 的原生错误。原生解析器未提供的域名、服务器及原因标志保留默认值，
 避免将代理解析失败错误地标记为目标域名失败。
 
+连接阶段收到的 TLS alert 和 SOCKS 握手失败保留为 `net.OpError`，原生错误的
+`Kind` 为 `connect`。本地证书验证失败仍保留原有分类，不会因同属建连阶段而被
+归入该类型。
+
 ## 已验证
 
 - Linux arm64：完整 Go 测试、跨传输并发和关闭隔离测试、race、cgocheck2、go vet。
