@@ -1,6 +1,6 @@
 {
   "archive": "libgocodex_ffi.a",
-  "sha256": "adb27b9bab13203d82a3f0b093eb1306a6a5d4fe90bc5784cecd7f2e1dc70bc5",
+  "sha256": "108be6d864821b84bbfc3c23733119b5dd521f506c6baa1be1e4c5c3f2227922",
   "target": "aarch64-unknown-linux-gnu",
   "glibc_baseline": "2.17",
   "rustc": "rustc 1.98.1 (48a229cea 2026-09-01) (gentoo)",
@@ -11,7 +11,7 @@
     "build.rs": "b2934a8b79a1871d47033b12ddd05b1a28096acb659a0ede12a22672a0b513bf",
     "Cargo.toml": "8011acfabbf615a522a4f55ce55054d9d7eb17cb0a44344c0cb1bacd8141d97c",
     "rust/src/http_client.rs": "bf9df54c502848ba7e813cc8a9e46849717153fb3af9c5e87475ddca395355af",
-    "rust/src/lib.rs": "bc3675dee88f46c7c497160518abd878ab6fe8285a5da529e7b088619b11298e",
+    "rust/src/lib.rs": "42940e7128eb72561d362b768154aa355d521656c72003699b10b44dbc864e98",
     "rust/src/runtime.rs": "3488c92fc2f618dc354c67599392c313ceb93a9a1055310b44ed616b8252c6c6",
     "rust/src/websocket_client.rs": "b2ff48763a87162ee173282562a10fff499923f470d74acd5295cddc61e09381"
   },

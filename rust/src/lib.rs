@@ -49,6 +49,17 @@ impl BridgeError {
         self.details = Some(details);
         self
     }
+
+    fn from_source(kind: &'static str, error: &(dyn std::error::Error + 'static)) -> Self {
+        let mut message = error.to_string();
+        let mut source = error.source();
+        while let Some(cause) = source {
+            message.push_str(": ");
+            message.push_str(&cause.to_string());
+            source = cause.source();
+        }
+        Self::new(kind, message)
+    }
 }
 
 impl From<codex_http_client::HttpError> for BridgeError {
@@ -62,25 +73,24 @@ impl From<codex_http_client::HttpError> for BridgeError {
         };
         // Preserve the source chain (including TLS errors), without the URL.
         let error = error.without_url();
-        let mut message = error.to_string();
-        let mut source = std::error::Error::source(&error);
-        while let Some(cause) = source {
-            message.push_str(": ");
-            message.push_str(&cause.to_string());
-            source = cause.source();
-        }
-        Self::new(kind, message)
+        Self::from_source(kind, &error)
     }
 }
 
 impl From<codex_http_client::RouteAwareRequestError> for BridgeError {
     fn from(error: codex_http_client::RouteAwareRequestError) -> Self {
-        let kind = if error.is_timeout() {
-            "timeout"
-        } else {
-            "request"
-        };
-        Self::new(kind, error.to_string())
+        match error {
+            // Use the same classification and URL redaction as fixed routes.
+            codex_http_client::RouteAwareRequestError::Request(error) => error.into(),
+            error => {
+                let kind = if error.is_timeout() {
+                    "timeout"
+                } else {
+                    "request"
+                };
+                Self::from_source(kind, &error)
+            }
+        }
     }
 }
 

@@ -143,6 +143,10 @@ make notices
 `Message`、`Timeout()` 和 `errors.As` 用法，原生错误前缀统一为 `gocodex:`；
 `Version()` 返回同一桥接库版本。
 
+原生错误实现 `net.Error`，超时可通过 `errors.As`、`Timeout()` 和 `Temporary()`
+识别；调用方取消仍返回原有 context 错误。HTTP 自动路由与显式路由均保留底层
+连接错误原因，并从原生请求错误中移除请求 URL。
+
 ## 已验证
 
 - Linux arm64：完整 Go 测试、跨传输并发和关闭隔离测试、race、cgocheck2、go vet。
